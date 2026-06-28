@@ -308,7 +308,12 @@ function getVideoProduct(matCode, matName) {
 // === Supabase ===
 var SUPABASE_URL = 'https://gdmpcccyoklahbjvlzba.supabase.co';
 var SUPABASE_ANON_KEY = 'sb_publishable_IsVJqGZpkNTsvsDFJDJsKA__cCOgO4r';
-var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+var supabase = null;
+try {
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} catch(e) {
+  console.warn('Supabase SDK 加载失败，将以本地模式运行');
+}
 
 var BATCH_SIZE = 500;
 var UPLOAD_SESSION = null;
@@ -364,7 +369,8 @@ async function trackingAdd(item) {
   return null;
 }
 async function trackingUpdate(item) {
-  var result = await supabase.from('tracking').update(toDB(item)).eq('track_id', item.track_id);
+  if (!item || !item.trackId) throw new Error('无效跟踪项');
+  var result = await supabase.from('tracking').update(toDB(item)).eq('track_id', item.trackId);
   if (result.error) throw new Error('更新跟踪项失败: ' + result.error.message);
 }
 async function trackingRemove(trackId) {
