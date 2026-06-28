@@ -311,25 +311,41 @@ var SUPABASE_ANON_KEY = 'sb_publishable_IsVJqGZpkNTsvsDFJDJsKA__cCOgO4r';
 var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 var BATCH_SIZE = 500;
+var UPLOAD_SESSION = null;
 
 async function supabaseSaveRawData(data) {
-  await supabase.from('inventory_data').delete().neq('id', 0);
+  UPLOAD_SESSION = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
   for (var i = 0; i < data.length; i += BATCH_SIZE) {
     var batch = data.slice(i, i + BATCH_SIZE);
-    var result = await supabase.from('inventory_data').insert({ raw_data: batch, file_name: 'upload', row_count: batch.length });
+    var result = await supabase.from('inventory_data').insert({ raw_data: batch, file_name: UPLOAD_SESSION, row_count: batch.length });
     if (result.error) throw new Error('保存到云端失败: ' + result.error.message + ' (第' + (Math.floor(i / BATCH_SIZE) + 1) + '批)');
   }
 }
 async function supabaseLoadRawData() {
-  var result = await supabase.from('inventory_data').select('raw_data, id').order('id', { ascending: true });
+  var result = await supabase.from('inventory_data').select('raw_data, id, file_name').order('id', { ascending: true });
   if (result.error) throw new Error('从云端加载失败: ' + result.error.message);
   if (!result.data || !result.data.length) return null;
-  var merged = [];
+  var groups = {};
   for (var r = 0; r < result.data.length; r++) {
-    if (result.data[r].raw_data && result.data[r].raw_data.length) {
-      merged = merged.concat(result.data[r].raw_data);
+    var fn = result.data[r].file_name || 'unknown';
+    if (!groups[fn]) groups[fn] = [];
+    groups[fn].push(result.data[r]);
+  }
+  var bestGroup = null;
+  var bestMaxId = -1;
+  for (var fn in groups) {
+    var maxId = groups[fn].reduce(function(m, row) { return Math.max(m, row.id); }, -1);
+    if (maxId > bestMaxId) { bestMaxId = maxId; bestGroup = groups[fn]; }
+  }
+  if (!bestGroup) return null;
+  bestGroup.sort(function(a, b) { return a.id - b.id; });
+  var merged = [];
+  for (var r = 0; r < bestGroup.length; r++) {
+    if (bestGroup[r].raw_data && bestGroup[r].raw_data.length) {
+      merged = merged.concat(bestGroup[r].raw_data);
     }
   }
+  UPLOAD_SESSION = bestGroup[0].file_name;
   return merged.length ? merged : null;
 }
 
