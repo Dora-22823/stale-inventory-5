@@ -310,16 +310,27 @@ var SUPABASE_URL = 'https://gdmpcccyoklahbjvlzba.supabase.co';
 var SUPABASE_ANON_KEY = 'sb_publishable_IsVJqGZpkNTsvsDFJDJsKA__cCOgO4r';
 var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+var BATCH_SIZE = 500;
+
 async function supabaseSaveRawData(data) {
-  var result = await supabase.from('inventory_data').insert({ raw_data: data, file_name: 'upload', row_count: data.length });
-  if (result.error) throw new Error('保存到云端失败: ' + result.error.message);
-  return result;
+  await supabase.from('inventory_data').delete().neq('id', 0);
+  for (var i = 0; i < data.length; i += BATCH_SIZE) {
+    var batch = data.slice(i, i + BATCH_SIZE);
+    var result = await supabase.from('inventory_data').insert({ raw_data: batch, file_name: 'upload', row_count: batch.length });
+    if (result.error) throw new Error('保存到云端失败: ' + result.error.message + ' (第' + (Math.floor(i / BATCH_SIZE) + 1) + '批)');
+  }
 }
 async function supabaseLoadRawData() {
-  var result = await supabase.from('inventory_data').select('raw_data').order('id', { ascending: false }).limit(1);
+  var result = await supabase.from('inventory_data').select('raw_data, id').order('id', { ascending: true });
   if (result.error) throw new Error('从云端加载失败: ' + result.error.message);
-  if (result.data && result.data.length) return result.data[0].raw_data;
-  return null;
+  if (!result.data || !result.data.length) return null;
+  var merged = [];
+  for (var r = 0; r < result.data.length; r++) {
+    if (result.data[r].raw_data && result.data[r].raw_data.length) {
+      merged = merged.concat(result.data[r].raw_data);
+    }
+  }
+  return merged.length ? merged : null;
 }
 
 async function trackingGetAll() {
@@ -415,18 +426,21 @@ async function handleFileUpload(event) {
     if (json.length < 2) throw new Error('数据不足');
     rawData = json;
     filtered = [...rawData];
-    try {
-      await supabaseSaveRawData(rawData);
-      status.textContent = '✅ 已加载 ' + rawData.length + ' 条数据 (已同步到云端)';
-    } catch(e) {
-      status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，但同步到云端失败: ' + e.message;
-    }
     document.getElementById('loadProgress').textContent = rawData.length + ' 条记录';
+    document.getElementById('loadingOverlay').style.display = 'none';
+    event.target.value = '';
     buildFilterOptions();
     applyFilters();
     renderColCheckboxes();
     await syncTrackingFromRawData();
     renderAll();
+    status.textContent = '⏳ 正在同步到云端...';
+    supabaseSaveRawData(rawData).then(function() {
+      status.textContent = '✅ 已加载 ' + rawData.length + ' 条数据 (已同步到云端)';
+    }).catch(function(e) {
+      status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，但同步到云端失败: ' + e.message;
+    });
+    return;
   } catch (e) {
     status.textContent = '❌ ' + e.message;
   }
@@ -446,21 +460,21 @@ async function loadDemo() {
   } catch {
     rawData = generateMock();
   }
-  try {
-    await supabaseSaveRawData(rawData);
-  } catch(e) {
-    status.textContent = '⚠️ 数据已加载但保存到云端失败: ' + e.message;
-  }
   filtered = [...rawData];
-  document.getElementById('loadProgress').textContent = rawData.length + ' 条记录 (本地缓存)';
+  document.getElementById('loadProgress').textContent = rawData.length + ' 条记录';
+  document.getElementById('loadingOverlay').style.display = 'none';
   buildFilterOptions();
   applyFilters();
   renderAll();
   renderColCheckboxes();
   await syncTrackingFromRawData();
   renderAll();
-  status.textContent = '✅ 已加载 ' + rawData.length + ' 条示例数据';
-  document.getElementById('loadingOverlay').style.display = 'none';
+  status.textContent = '⏳ 正在同步到云端...';
+  supabaseSaveRawData(rawData).then(function() {
+    status.textContent = '✅ 已加载 ' + rawData.length + ' 条示例数据 (已同步到云端)';
+  }).catch(function(e) {
+    status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条示例数据，但同步到云端失败: ' + e.message;
+  });
 }
 
 function renderEmptyState() {
