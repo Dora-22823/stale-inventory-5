@@ -321,31 +321,13 @@ var UPLOAD_SESSION = null;
 async function supabaseSaveRawData(data, onProgress) {
   UPLOAD_SESSION = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
   var totalBatches = Math.ceil(data.length / BATCH_SIZE);
-  var beforeResult = await supabase.from('inventory_data').select('id').order('id', { ascending: false }).limit(1);
-  var beforeMaxId = (beforeResult.data && beforeResult.data.length) ? beforeResult.data[0].id : 0;
   for (var i = 0; i < data.length; i += BATCH_SIZE) {
     var batchNum = Math.floor(i / BATCH_SIZE) + 1;
     var batch = data.slice(i, i + BATCH_SIZE);
-    var result = await supabase.from('inventory_data').insert({ raw_data: batch, file_name: UPLOAD_SESSION + '_pending', row_count: batch.length });
+    var result = await supabase.from('inventory_data').insert({ raw_data: batch, file_name: UPLOAD_SESSION, row_count: batch.length });
     if (result.error) throw new Error('保存到云端失败: ' + result.error.message + ' (第' + batchNum + '/' + totalBatches + '批)');
     if (onProgress) onProgress(batchNum, totalBatches);
   }
-  var afterResult = await supabase.from('inventory_data').select('id').order('id', { ascending: false }).limit(1);
-  var afterMaxId = (afterResult.data && afterResult.data.length) ? afterResult.data[0].id : 0;
-  var concurrent = afterMaxId > beforeMaxId;
-  var renameResult = await supabase.from('inventory_data').update({ file_name: UPLOAD_SESSION }).eq('file_name', UPLOAD_SESSION + '_pending');
-  if (renameResult.error) throw new Error('提交数据失败: ' + renameResult.error.message);
-  var allFn = await supabase.from('inventory_data').select('file_name');
-  if (allFn.data && allFn.data.length) {
-    var seen = {};
-    for (var r = 0; r < allFn.data.length; r++) {
-      var fn = allFn.data[r].file_name || '';
-      if (fn === UPLOAD_SESSION || fn.indexOf('_pending') >= 0 || fn.indexOf('_archived') >= 0 || seen[fn]) continue;
-      seen[fn] = true;
-      await supabase.from('inventory_data').update({ file_name: fn + '_archived' }).eq('file_name', fn);
-    }
-  }
-  return { concurrent: concurrent };
 }
 async function supabaseLoadRawData() {
   var metaResult = await supabase.from('inventory_data').select('id, file_name').order('id', { ascending: true });
@@ -354,7 +336,6 @@ async function supabaseLoadRawData() {
   var groups = {};
   for (var r = 0; r < metaResult.data.length; r++) {
     var fn = metaResult.data[r].file_name || 'unknown';
-    if (fn.indexOf('_pending') >= 0 || fn.indexOf('_archived') >= 0) continue;
     if (!groups[fn]) groups[fn] = [];
     groups[fn].push(metaResult.data[r].id);
   }
@@ -481,19 +462,10 @@ async function handleFileUpload(event) {
     status.textContent = '⏳ 正在同步到云端... 0/' + Math.ceil(rawData.length / BATCH_SIZE);
     supabaseSaveRawData(rawData, function(done, total) {
       status.textContent = '⏳ 正在同步到云端... ' + done + '/' + total;
-    }).then(function(result) {
-      if (result && result.concurrent) {
-        status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，上传期间检测到其他用户提交，已自动覆盖';
-      } else {
-        status.textContent = '✅ 已加载 ' + rawData.length + ' 条数据 (已同步到云端)';
-      }
+    }).then(function() {
+      status.textContent = '✅ 已加载 ' + rawData.length + ' 条数据 (已同步到云端)';
     }).catch(function(e) {
-      var msg = e.message;
-      if (msg.indexOf('quota') >= 0 || msg.indexOf('size') >= 0 || msg.indexOf('disk') >= 0) {
-        status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，但云端空间不足，请在 Supabase 控制台清理旧数据';
-      } else {
-        status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，但同步到云端失败: ' + msg;
-      }
+      status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，但同步到云端失败: ' + e.message;
     });
     return;
   } catch (e) {
@@ -527,19 +499,10 @@ async function loadDemo() {
   status.textContent = '⏳ 正在同步到云端... 0/' + Math.ceil(rawData.length / BATCH_SIZE);
   supabaseSaveRawData(rawData, function(done, total) {
     status.textContent = '⏳ 正在同步到云端... ' + done + '/' + total;
-  }).then(function(result) {
-    if (result && result.concurrent) {
-      status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条示例数据，上传期间检测到其他用户提交，已自动覆盖';
-    } else {
-      status.textContent = '✅ 已加载 ' + rawData.length + ' 条示例数据 (已同步到云端)';
-    }
+  }).then(function() {
+    status.textContent = '✅ 已加载 ' + rawData.length + ' 条示例数据 (已同步到云端)';
   }).catch(function(e) {
-    var msg = e.message;
-    if (msg.indexOf('quota') >= 0 || msg.indexOf('size') >= 0 || msg.indexOf('disk') >= 0) {
-      status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条示例数据，但云端空间不足，请在 Supabase 控制台清理旧数据';
-    } else {
-      status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条示例数据，但同步到云端失败: ' + msg;
-    }
+    status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条示例数据，但同步到云端失败: ' + e.message;
   });
 }
 
@@ -674,7 +637,7 @@ function exportShareVersion() {
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = '呆滞库存分析系统6.0_分享版.html';
+    a.download = '呆滞库存分析系统5.0_分享版.html';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
