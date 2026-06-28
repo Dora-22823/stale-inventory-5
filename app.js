@@ -313,12 +313,15 @@ var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 var BATCH_SIZE = 500;
 var UPLOAD_SESSION = null;
 
-async function supabaseSaveRawData(data) {
+async function supabaseSaveRawData(data, onProgress) {
   UPLOAD_SESSION = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+  var totalBatches = Math.ceil(data.length / BATCH_SIZE);
   for (var i = 0; i < data.length; i += BATCH_SIZE) {
+    var batchNum = Math.floor(i / BATCH_SIZE) + 1;
     var batch = data.slice(i, i + BATCH_SIZE);
     var result = await supabase.from('inventory_data').insert({ raw_data: batch, file_name: UPLOAD_SESSION, row_count: batch.length });
-    if (result.error) throw new Error('保存到云端失败: ' + result.error.message + ' (第' + (Math.floor(i / BATCH_SIZE) + 1) + '批)');
+    if (result.error) throw new Error('保存到云端失败: ' + result.error.message + ' (第' + batchNum + '/' + totalBatches + '批)');
+    if (onProgress) onProgress(batchNum, totalBatches);
   }
 }
 async function supabaseLoadRawData() {
@@ -450,8 +453,10 @@ async function handleFileUpload(event) {
     renderColCheckboxes();
     await syncTrackingFromRawData();
     renderAll();
-    status.textContent = '⏳ 正在同步到云端...';
-    supabaseSaveRawData(rawData).then(function() {
+    status.textContent = '⏳ 正在同步到云端... 0/' + Math.ceil(rawData.length / BATCH_SIZE);
+    supabaseSaveRawData(rawData, function(done, total) {
+      status.textContent = '⏳ 正在同步到云端... ' + done + '/' + total;
+    }).then(function() {
       status.textContent = '✅ 已加载 ' + rawData.length + ' 条数据 (已同步到云端)';
     }).catch(function(e) {
       status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条数据，但同步到云端失败: ' + e.message;
@@ -485,8 +490,10 @@ async function loadDemo() {
   renderColCheckboxes();
   await syncTrackingFromRawData();
   renderAll();
-  status.textContent = '⏳ 正在同步到云端...';
-  supabaseSaveRawData(rawData).then(function() {
+  status.textContent = '⏳ 正在同步到云端... 0/' + Math.ceil(rawData.length / BATCH_SIZE);
+  supabaseSaveRawData(rawData, function(done, total) {
+    status.textContent = '⏳ 正在同步到云端... ' + done + '/' + total;
+  }).then(function() {
     status.textContent = '✅ 已加载 ' + rawData.length + ' 条示例数据 (已同步到云端)';
   }).catch(function(e) {
     status.textContent = '⚠️ 已加载 ' + rawData.length + ' 条示例数据，但同步到云端失败: ' + e.message;
