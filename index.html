@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>呆滞库存分析系统 5.0</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="load-text" id="loadText">正在初始化系统...</div>
+  <div class="load-sub" id="loadProgress"></div>
+</div>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-icon">📊</div>
+    <div class="brand-text">呆滞库存 · <span>分析系统 5.0</span></div>
+  </div>
+  <div class="header-right">
+    <div class="stat"><div class="stat-val" id="hdrSku">0</div><div class="stat-lbl">总SKU</div></div>
+    <div class="stat"><div class="stat-val" id="hdrQty">0</div><div class="stat-lbl">总数量</div></div>
+    <div class="stat"><div class="stat-val" id="hdrAmt">¥0</div><div class="stat-lbl">呆料金额</div></div>
+    <div class="stat"><div class="stat-val" id="hdrTotalAmt">¥0</div><div class="stat-lbl">库存总金额</div></div>
+    <div class="stat"><div class="stat-val" id="hdrSlowAmt">¥0</div><div class="stat-lbl">滞料金额</div></div>
+  </div>
+</header>
+
+<main class="app-main">
+  <!-- Upload -->
+  <div class="upload-bar">
+    <span style="font-size:13px;font-weight:600;color:var(--gray-600);">📤 数据更新</span>
+    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" onchange="handleFileUpload(event)" style="display:none">
+    <button class="btn-filter" onclick="document.getElementById('fileInput').click()">选择文件</button>
+    <span style="font-size:12px;color:var(--gray-400);">.csv / .xlsx / .xls</span>
+    <button class="btn-filter outline" onclick="loadDemo()">示例数据</button>
+    <button class="btn-filter" onclick="exportShareVersion()">📤 导出分享版</button>
+    <span id="uploadStatus" style="font-size:12px;color:var(--gray-500);margin-left:auto;">📤 请上传数据文件</span>
+  </div>
+
+  <!-- Filters -->
+  <div class="filter-bar" id="filterBar">
+    <label>产品线</label>
+    <select id="fProdLine"><option value="">全部</option></select>
+    <div class="spacer"></div>
+    <label>仓库</label>
+    <select id="fWarehouse"><option value="">全部</option></select>
+    <div class="spacer"></div>
+    <label>物料类别</label>
+    <select id="fMatCat"><option value="">全部</option></select>
+    <div class="spacer"></div>
+    <label>库存状态</label>
+    <select id="fInvStatus"><option value="">全部</option></select>
+    <div class="spacer"></div>
+    <label>战略</label>
+    <select id="fStrategy"><option value="">全部</option><option value="0">0</option><option value="1">1</option></select>
+    <div class="spacer"></div>
+    <label>搜索</label>
+    <input id="fSearch" placeholder="物料编码/名称..." style="max-width:160px">
+    <div class="spacer"></div>
+    <label>呆料金额 ≥</label>
+    <input id="fMinAmt" placeholder="0" style="width:80px">
+    <div class="spacer"></div>
+    <label>物料分类</label>
+    <select id="fMatCategory">
+      <option value="">全部</option>
+      <option value="成品">成品</option>
+      <option value="半成品">半成品</option>
+      <option value="原材料">原材料</option>
+      <option value="其他">其他</option>
+    </select>
+    <div class="spacer" id="spacerVideoProd" style="display:none"></div>
+    <label id="lblVideoProd" style="display:none">产品</label>
+    <select id="fVideoProduct" style="display:none"><option value="">全部</option></select>
+    <button class="btn-filter" onclick="applyFilters()">筛选</button>
+    <button class="btn-filter outline" onclick="resetFilters()">重置</button>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpi-row" id="kpiRow">
+    <div class="kpi-card"><div class="kpi-lbl">SKU 总数</div><div class="kpi-val">0</div><div class="kpi-sub">条记录</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">库存总数量</div><div class="kpi-val">0</div><div class="kpi-sub">件</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">呆料金额</div><div class="kpi-val">¥0</div><div class="kpi-sub">成本价</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">超期金额</div><div class="kpi-val">¥0</div><div class="kpi-sub">含滞料</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">平均单价</div><div class="kpi-val">¥0</div><div class="kpi-sub">加权</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">产品线数</div><div class="kpi-val">0</div><div class="kpi-sub">条产品线</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="tabProdLine">📦 产品线分析</button>
+    <button class="tab-btn" data-tab="tabWarehouse">🏭 仓库分析</button>
+    <button class="tab-btn" data-tab="tabMatCat">📋 物料类别</button>
+    <button class="tab-btn" data-tab="tabTop10">🏆 TOP 10 呆滞</button>
+    <button class="tab-btn" data-tab="tabDept">👥 部门分析</button>
+    <button class="tab-btn" data-tab="tabTracking">🎯 呆滞处理跟踪</button>
+    <button class="tab-btn" data-tab="tabVideoProduct">📺 产品分析</button>
+  </div>
+
+  <div class="tab-content active" id="tabProdLine">
+    <div class="chart-grid">
+      <div class="chart-box"><h3>呆料金额 TOP15</h3><canvas id="chartProdLine"></canvas></div>
+      <div><h3>明细</h3><div style="max-height:280px;overflow-y:auto" id="prodLineTable"></div></div>
+    </div>
+  </div>
+  <div class="tab-content" id="tabWarehouse">
+    <div class="chart-grid">
+      <div class="chart-box"><h3>各仓库呆料金额</h3><canvas id="chartWarehouse"></canvas></div>
+      <div><h3>明细</h3><div style="max-height:280px;overflow-y:auto" id="whTable"></div></div>
+    </div>
+  </div>
+  <div class="tab-content" id="tabMatCat">
+    <div class="chart-grid" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="chart-box"><h3>物料类别分布</h3><canvas id="chartMatCat"></canvas></div>
+      <div class="chart-box"><h3>库存总金额占比</h3><canvas id="chartTotalPie"></canvas></div>
+      <div class="chart-box"><h3>滞料金额占比</h3><canvas id="chartSlowPie"></canvas></div>
+      <div style="grid-column:1/-1"><h3>明细</h3><div style="max-height:280px;overflow-y:auto" id="matCatTable"></div></div>
+    </div>
+  </div>
+  <div class="tab-content" id="tabTop10">
+    <div class="chart-grid">
+      <div class="chart-box" style="grid-column:1/-1"><h3>呆料金额 TOP 10 物料</h3><canvas id="chartTop10"></canvas></div>
+      <div style="grid-column:1/-1"><h3>明细</h3><div id="top10Table"></div></div>
+    </div>
+  </div>
+  <div class="tab-content" id="tabDept">
+    <div class="chart-grid">
+      <div class="chart-box"><h3>责任部门呆料金额</h3><canvas id="chartDept"></canvas></div>
+      <div><h3>明细</h3><div style="max-height:280px;overflow-y:auto" id="deptTable"></div></div>
+    </div>
+  </div>
+
+  <!-- Tracking Tab -->
+  <div class="tab-content" id="tabTracking">
+    <div class="track-kpi" id="trackKPI"></div>
+    <div class="track-level-summary" id="trackLevelSummary"></div>
+    <div class="track-toolbar">
+      <button class="btn-filter" onclick="addSelectedToTracking()">🎯 从明细导入</button>
+      <button class="btn-filter outline" onclick="manualAddTrackItem()">➕ 新增跟踪项</button>
+      <div class="spacer"></div>
+      <label>状态</label>
+      <select id="fTrackStatus" onchange="renderTracking()">
+        <option value="">全部</option>
+        <option value="待处理">⏳ 待处理</option>
+        <option value="处理中">🔄 处理中</option>
+        <option value="已闭环">✅ 已闭环</option>
+        <option value="已搁置">📦 已搁置</option>
+      </select>
+      <label>等级</label>
+      <select id="fTrackLevel" onchange="renderTracking()">
+        <option value="">全部</option>
+        <option value="高">🔴 高优先级</option>
+        <option value="中">🟡 中优先级</option>
+        <option value="低">🟢 低优先级</option>
+      </select>
+      <label>品线</label>
+      <select id="fTrackProdLine" onchange="renderTracking()"><option value="">全部</option></select>
+      <label>类型</label>
+      <select id="fTrackMatCat" onchange="renderTracking()">
+        <option value="">全部</option>
+        <option value="成品">成品</option>
+        <option value="非成品">非成品</option>
+      </select>
+      <div class="spacer"></div>
+      <button class="sort-btn active" data-key="staleAmt" onclick="toggleTrackSort('staleAmt')">金额 ↓</button>
+      <button class="sort-btn" data-key="updatedDate" onclick="toggleTrackSort('updatedDate')">时间 ↕</button>
+    </div>
+    <div class="track-table-scroll" id="trackTableWrap">
+      <table class="detail track-table" id="trackTable">
+        <thead id="trackHead"></thead>
+        <tbody id="trackBody"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span id="trackPageInfo">共 0 条</span>
+      <div class="pages" id="trackPageBtns"></div>
+    </div>
+  </div>
+
+  <!-- Video Product Tab -->
+  <div class="tab-content" id="tabVideoProduct">
+    <div class="chart-grid">
+      <div class="chart-box tall"><h3>产品库存总金额 TOP</h3><canvas id="chartVideoTotalAmt"></canvas></div>
+      <div class="chart-box tall"><h3>产品滞料金额 TOP</h3><canvas id="chartVideoSlowAmt"></canvas></div>
+      <div style="grid-column:1/-1"><h3>明细</h3><div style="max-height:280px;overflow-y:auto" id="videoProductTable"></div></div>
+    </div>
+  </div>
+
+  <!-- Detail table -->
+  <div class="detail-wrap">
+    <div class="detail-toolbar" style="position:relative">
+      <label><input type="checkbox" id="cbSelectAll" onchange="toggleAllCheckbox(this)" style="accent-color:var(--primary);margin-right:4px"> 全选</label>
+      <button class="btn-filter" onclick="addSelectedToTracking()" style="font-size:11px">🎯 导入跟踪</button>
+      <span style="color:var(--gray-200);margin:0 4px;">|</span>
+      <label>显示列：</label>
+      <button class="btn-filter" onclick="toggleColPanel()">☰ 选择列</button>
+      <button class="btn-filter outline" onclick="selectAllCols()" style="font-size:11px">全部</button>
+      <button class="btn-filter outline" onclick="deselectAllCols()" style="font-size:11px">取消</button>
+      <div class="col-panel" id="colPanel" style="display:none"><div class="col-panel-inner" id="colCheckboxContainer"></div></div>
+      <select id="colSelector" multiple style="display:none"></select>
+      <span style="color:var(--gray-200);margin:0 4px;">|</span>
+      <label>排序</label>
+      <button class="sort-btn" data-key="staleAmt" onclick="toggleSort('staleAmt')">呆料金额 ↕</button>
+      <button class="sort-btn" data-key="totalAmt" onclick="toggleSort('totalAmt')">总金额 ↕</button>
+      <button class="sort-btn" data-key="overdueAmt" onclick="toggleSort('overdueAmt')">超期金额 ↕</button>
+      <button class="sort-btn" data-key="slowAmt" onclick="toggleSort('slowAmt')">滞料金额 ↕</button>
+      <span style="color:var(--gray-200);margin:0 4px;">|</span>
+      <button class="btn-filter" onclick="exportData()">📥 导出</button>
+      <span class="col-count" id="colCount">已选 44 / 44 列</span>
+    </div>
+    <div class="context-menu" id="contextMenu" style="display:none">
+      <div class="context-menu-item" onclick="hideColumn()">🙈 隐藏该列</div>
+    </div>
+    <div class="table-scroll" id="detailScroll">
+      <table class="detail">
+        <thead id="detailHead"><tr><th>#</th></tr></thead>
+        <tbody id="detailBody"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span id="pageInfo">共 0 条</span>
+      <div class="pages" id="pageBtns"></div>
+    </div>
+  </div>
+</main>
+
+<div class="modal-overlay" id="matchColModal" style="display:none" onclick="if(event.target===this)closeMatchColModal()">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span id="matchColModalTitle"></span>
+      <button onclick="closeMatchColModal()">✕</button>
+    </div>
+    <div class="modal-body" id="matchColModalBody"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="textEditorModal" style="display:none" onclick="if(event.target===this)closeTextEditor()">
+  <div class="modal-content" style="min-width:480px">
+    <div class="modal-header">
+      <span id="textEditorTitle"></span>
+      <button onclick="closeTextEditor()">✕</button>
+    </div>
+    <div class="modal-body">
+      <textarea id="textEditorArea" style="width:100%;height:180px;padding:10px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;outline:none"></textarea>
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+        <button class="btn-filter outline" onclick="closeTextEditor()">取消</button>
+        <button class="btn-filter" onclick="saveTextEditor()">💾 保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.__EMBEDDED_DATA__ = null;
+window.__EMBEDDED_TRACKING__ = null;
+</script>
+<script src="app.js"></script>
+
+</body>
+</html>
