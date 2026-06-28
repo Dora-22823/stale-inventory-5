@@ -325,30 +325,30 @@ async function supabaseSaveRawData(data, onProgress) {
   }
 }
 async function supabaseLoadRawData() {
-  var result = await supabase.from('inventory_data').select('raw_data, id, file_name').order('id', { ascending: true });
-  if (result.error) throw new Error('从云端加载失败: ' + result.error.message);
-  if (!result.data || !result.data.length) return null;
+  var metaResult = await supabase.from('inventory_data').select('id, file_name').order('id', { ascending: true });
+  if (metaResult.error) throw new Error('从云端加载失败: ' + metaResult.error.message);
+  if (!metaResult.data || !metaResult.data.length) return null;
   var groups = {};
-  for (var r = 0; r < result.data.length; r++) {
-    var fn = result.data[r].file_name || 'unknown';
+  for (var r = 0; r < metaResult.data.length; r++) {
+    var fn = metaResult.data[r].file_name || 'unknown';
     if (!groups[fn]) groups[fn] = [];
-    groups[fn].push(result.data[r]);
+    groups[fn].push(metaResult.data[r].id);
   }
-  var bestGroup = null;
+  var bestSession = null;
   var bestMaxId = -1;
   for (var fn in groups) {
-    var maxId = groups[fn].reduce(function(m, row) { return Math.max(m, row.id); }, -1);
-    if (maxId > bestMaxId) { bestMaxId = maxId; bestGroup = groups[fn]; }
+    var maxId = groups[fn].reduce(function(m, id) { return Math.max(m, id); }, -1);
+    if (maxId > bestMaxId) { bestMaxId = maxId; bestSession = fn; }
   }
-  if (!bestGroup) return null;
-  bestGroup.sort(function(a, b) { return a.id - b.id; });
+  UPLOAD_SESSION = bestSession;
+  var dataResult = await supabase.from('inventory_data').select('raw_data, id').eq('file_name', bestSession).order('id', { ascending: true });
+  if (dataResult.error) throw new Error('从云端加载数据失败: ' + dataResult.error.message);
   var merged = [];
-  for (var r = 0; r < bestGroup.length; r++) {
-    if (bestGroup[r].raw_data && bestGroup[r].raw_data.length) {
-      merged = merged.concat(bestGroup[r].raw_data);
+  for (var r = 0; r < dataResult.data.length; r++) {
+    if (dataResult.data[r].raw_data && dataResult.data[r].raw_data.length) {
+      merged = merged.concat(dataResult.data[r].raw_data);
     }
   }
-  UPLOAD_SESSION = bestGroup[0].file_name;
   return merged.length ? merged : null;
 }
 
